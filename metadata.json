@@ -1,0 +1,6 @@
+{
+  "name": "AI Avatar Simulator ",
+  "description": "An application that takes an audio MP3, character expressions (PNGs), and a background video to simulate an expressive character video. The character changes expressions in sync with the audio.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
