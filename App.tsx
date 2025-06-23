@@ -28,7 +28,7 @@ const ASSEMBLYAI_API_KEY = "98dd4c7e12d745bc97722b54671ebeff";
 const ASSEMBLYAI_UPLOAD_URL = "https://api.assemblyai.com/v2/upload";
 const ASSEMBLYAI_TRANSCRIPT_URL = "https://api.assemblyai.com/v2/transcript";
 
-const PIXABAY_API_KEY = "YOUR_PIXABAY_API_KEY"; // <<< IMPORTANT: Replace with your actual Pixabay API Key
+const PIXABAY_API_KEY = "50577453-acd15cf6b8242af889a9c7b1d"; // <<< IMPORTANT: Replace with your actual Pixabay API Key
 const PIXABAY_URL = `https://pixabay.com/api/?key=${PIXABAY_API_KEY}&image_type=photo&orientation=horizontal&safesearch=true&per_page=3`;
 
 const App: React.FC = () => {
