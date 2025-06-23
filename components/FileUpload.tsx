@@ -7,7 +7,7 @@ interface FileUploadProps {
   accept: string;
   currentFile: File | null;
   previewSrc?: string | null;
-  isRequired?: boolean; // New optional prop
+  isRequired?: boolean; 
 }
 
 export const FileUpload: React.FC<FileUploadProps> = ({ 
@@ -16,7 +16,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
   accept, 
   currentFile, 
   previewSrc,
-  isRequired = false // Default to false
+  isRequired = false 
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -48,7 +48,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({
           onChange={handleFileChange}
           accept={accept}
           className="hidden"
-          aria-hidden="true"
+          aria-hidden="true" // Hide from assistive tech as it's controlled by the button
+          tabIndex={-1} // Prevent tabbing to hidden input
         />
         {currentFile && (
           <span className="text-xs text-gray-400 truncate max-w-[150px] flex-shrink min-w-0">
@@ -62,9 +63,9 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         </div>
       )}
        {!currentFile && isRequired && ( 
-         <p className="text-xs text-yellow-400 mt-1">Required</p>
+         <p className="text-xs text-yellow-400 mt-1">Required if no preset is active.</p>
        )}
-       {!currentFile && !isRequired && label.includes("(Optional)") && (
+       {!currentFile && !isRequired && (
          <p className="text-xs text-gray-500 mt-1">Optional</p>
        )}
     </div>
