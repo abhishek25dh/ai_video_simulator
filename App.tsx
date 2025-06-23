@@ -23,35 +23,42 @@ interface ScriptSegment {
 }
 
 type ContextualImagesState = Record<number, ContextualImageItem | null>;
-type InputMode = 'file' | 'url' | 'preset'; // Added 'preset'
 
 const ASSEMBLYAI_API_KEY = "98dd4c7e12d745bc97722b54671ebeff"; 
 const ASSEMBLYAI_UPLOAD_URL = "https://api.assemblyai.com/v2/upload";
 const ASSEMBLYAI_TRANSCRIPT_URL = "https://api.assemblyai.com/v2/transcript";
 
-const PIXABAY_API_KEY: string = "50577453-acd15cf6b8242af889a9c7b1d"; 
+const PIXABAY_API_KEY = "YOUR_PIXABAY_API_KEY"; // <<< IMPORTANT: Replace with your actual Pixabay API Key
 const PIXABAY_URL = `https://pixabay.com/api/?key=${PIXABAY_API_KEY}&image_type=photo&orientation=horizontal&safesearch=true&per_page=3`;
 
-const PRESET_BASE_URL = "https://darkslategray-octopus-566678.hostingersite.com/";
+interface PresetVideo {
+  id: number;
+  name: string;
+  src: string; // Placeholder, could be a real URL in a full app
+  mockFileSize: number;
+  mockFileType: string;
+  description: string;
+}
+
+const PRESET_VIDEOS: PresetVideo[] = [
+  { id: 1, name: "Preset: Tech Review", src: "placeholder_tech_review.mp4", mockFileSize: 5 * 1024 * 1024, mockFileType: 'video/mp4', description: "A short clip discussing new gadgets." },
+  { id: 2, name: "Preset: Nature Walk", src: "placeholder_nature_walk.mp4", mockFileSize: 8 * 1024 * 1024, mockFileType: 'video/mp4', description: "Scenic views and commentary on wildlife." },
+  { id: 3, name: "Preset: Cooking Tutorial", src: "placeholder_cooking_tutorial.mp4", mockFileSize: 6 * 1024 * 1024, mockFileType: 'video/mp4', description: "A quick recipe demonstration." },
+  { id: 4, name: "Preset: Story Time", src: "placeholder_story_time.mp4", mockFileSize: 4 * 1024 * 1024, mockFileType: 'video/mp4', description: "An engaging narrative for all ages." },
+];
 
 
 const App: React.FC = () => {
-  const [inputMode, setInputMode] = useState<InputMode>('file');
-  
   const [mainVideoFile, setMainVideoFile] = useState<File | null>(null);
-  const [mainVideoUrlInput, setMainVideoUrlInput] = useState<string>("");
   const [mainVideoSrc, setMainVideoSrc] = useState<string | null>(null);
-  
   const [transcriptionAudioFile, setTranscriptionAudioFile] = useState<File | null>(null);
-  const [transcriptionAudioUrlInput, setTranscriptionAudioUrlInput] = useState<string>("");
-  const [presetNumberInput, setPresetNumberInput] = useState<string>(""); // For preset mode
 
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const pollingTimeoutRef = useRef<number | null>(null);
 
   const [scriptSegments, setScriptSegments] = useState<ScriptSegment[]>([]);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
-  const [transcriptionStatus, setTranscriptionStatus] = useState("Idle. Configure inputs to start.");
+  const [transcriptionStatus, setTranscriptionStatus] = useState("Idle. Upload video or select a preset to start.");
 
   const [assemblyAiStatus, setAssemblyAiStatus] = useState<'idle' | 'uploading' | 'queued' | 'processing' | 'transcribing' | 'completed' | 'error'>('idle');
   const [assemblyAiTranscriptId, setAssemblyAiTranscriptId] = useState<string | null>(null);
@@ -64,13 +71,17 @@ const App: React.FC = () => {
   
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number>(-1);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isVideoReadyToPlay, setIsVideoReadyToPlay] = useState(false);
-
 
   const [editingUrlForSegmentKey, setEditingUrlForSegmentKey] = useState<number | null>(null);
   const [currentUserInputUrl, setCurrentUserInputUrl] = useState<string>("");
   const [videoDuration, setVideoDuration] = useState<number>(0);
   const [currentTime, setCurrentTime] = useState<number>(0);
+
+  // Preset related state
+  const [presetInput, setPresetInput] = useState<string>("");
+  const [selectedPreset, setSelectedPreset] = useState<PresetVideo | null>(null);
+  const [isPresetLoading, setIsPresetLoading] = useState<boolean>(false);
+  const [currentPresetStatus, setCurrentPresetStatus] = useState<string>("");
 
 
   useEffect(() => {
@@ -79,33 +90,23 @@ const App: React.FC = () => {
       setGeminiApiKeyExists(true);
     } else {
       setGeminiApiKeyExists(false);
-      setTranscriptionStatus(prev => {
-        const geminiErrorMsg = "Error: Gemini API Key missing. Visual suggestions disabled.";
-        if (prev.includes(geminiErrorMsg)) return prev;
-        if (prev.startsWith("Idle") || prev.startsWith("Ready")) return geminiErrorMsg;
-        return prev.endsWith(".") ? prev + " " + geminiErrorMsg : prev + ". " + geminiErrorMsg;
-      });
+      // This status update will be handled by buildInitialStatus
       console.error("Gemini API_KEY environment variable not set.");
     }
   }, []);
 
+  useEffect(() => {
+    // This effect ensures transcriptionStatus is up-to-date when API key status changes
+    // or when the component initially mounts.
+    setTranscriptionStatus(buildInitialStatus());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geminiApiKeyExists, mainVideoFile, PIXABAY_API_KEY, ASSEMBLYAI_API_KEY]);
+
+
   const allContextualDataProcessed = assemblyAiStatus === 'completed' && !isProcessingAI && scriptSegments.length > 0;
 
-  const isPixabayConfigured = PIXABAY_API_KEY && PIXABAY_API_KEY !== "YOUR_PIXABAY_API_KEY"; 
-  
-  const isValidPresetNumber = (numStr: string) => /^\d+$/.test(numStr) && parseInt(numStr, 10) > 0;
-
-  const canStartProcessing = 
-    ((inputMode === 'file' && !!mainVideoFile) || 
-     (inputMode === 'url' && !!mainVideoUrlInput && mainVideoUrlInput.startsWith('http')) ||
-     (inputMode === 'preset' && isValidPresetNumber(presetNumberInput) && !!mainVideoSrc) // Ensure mainVideoSrc is set for preset
-    ) &&
-    !isProcessingAI && 
-    !!ASSEMBLYAI_API_KEY && 
-    geminiApiKeyExists &&
-    isPixabayConfigured;
-
-  const canStartPlayback = !!mainVideoSrc && allContextualDataProcessed && isVideoReadyToPlay;
+  const canStartProcessing = !!mainVideoFile && !isProcessingAI && !!ASSEMBLYAI_API_KEY && geminiApiKeyExists && !!PIXABAY_API_KEY && PIXABAY_API_KEY !== "YOUR_PIXABAY_API_KEY";
+  const canStartPlayback = !!mainVideoSrc && allContextualDataProcessed;
 
   useEffect(() => {
     if (!assemblyAiTranscriptId || assemblyAiStatus === 'completed' || assemblyAiStatus === 'error' || assemblyAiStatus === 'idle') {
@@ -178,58 +179,30 @@ const App: React.FC = () => {
     let statusParts: string[] = [];
     if (!ASSEMBLYAI_API_KEY) statusParts.push("Error: AssemblyAI API Key missing.");
     if (!geminiApiKeyExists) statusParts.push("Error: Gemini API Key missing. Visuals disabled.");
-    if (!isPixabayConfigured) statusParts.push("Error: Pixabay API Key missing or invalid. Image fetching disabled.");
-
+    if (!PIXABAY_API_KEY || PIXABAY_API_KEY === "YOUR_PIXABAY_API_KEY") statusParts.push("Error: Pixabay API Key missing or invalid. Image fetching disabled.");
+    
     if (statusParts.length > 0) return statusParts.join(" Also, ");
     
-    if ((inputMode === 'file' && mainVideoFile) || 
-        (inputMode === 'url' && mainVideoUrlInput) ||
-        (inputMode === 'preset' && isValidPresetNumber(presetNumberInput))) {
-      return "Ready to process inputs.";
-    }
-    return "Idle. Configure inputs to start.";
+    if (mainVideoFile) return "Ready to process video.";
+    if (selectedPreset) return `Preset '${selectedPreset.name}' loaded. Ready to process.`;
+    return "Idle. Upload video or select a preset to start.";
   }
-
-  const handleInputModeChange = (newMode: InputMode) => {
-    setInputMode(newMode);
-    // Clear inputs of the other mode to avoid confusion
-    if (newMode === 'url') {
-      setMainVideoFile(null);
-      setTranscriptionAudioFile(null);
-      setPresetNumberInput("");
-    } else if (newMode === 'file') {
-      setMainVideoUrlInput("");
-      setTranscriptionAudioUrlInput("");
-      setPresetNumberInput("");
-      if (mainVideoSrc && !mainVideoSrc.startsWith('blob:')) { 
-          setMainVideoSrc(null);
-      }
-    } else { // preset mode
-      setMainVideoFile(null);
-      setTranscriptionAudioFile(null);
-      setMainVideoUrlInput("");
-      setTranscriptionAudioUrlInput("");
-      // Don't clear presetNumberInput here, let handlePresetNumberChange manage it
-      if (presetNumberInput && isValidPresetNumber(presetNumberInput)) {
-        setMainVideoSrc(`${PRESET_BASE_URL}${presetNumberInput}.mp4`);
-        setIsVideoReadyToPlay(false);
-      } else {
-        setMainVideoSrc(null);
-      }
-    }
-    setTranscriptionStatus(buildInitialStatus());
-  };
 
   const handleMainVideoUpload = (file: File) => {
     setMainVideoFile(file);
-    if (mainVideoSrc && mainVideoSrc.startsWith('blob:')) URL.revokeObjectURL(mainVideoSrc);
+    if (mainVideoSrc) URL.revokeObjectURL(mainVideoSrc);
     setMainVideoSrc(URL.createObjectURL(file));
-    setIsVideoReadyToPlay(false);
     
-    let baseStatus = buildInitialStatus();
+    // Clear preset selection if manual upload occurs
+    setPresetInput("");
+    setSelectedPreset(null);
+    setCurrentPresetStatus("");
+
+    let baseStatus = buildInitialStatus(); // buildInitialStatus will now correctly reflect no preset
      if (baseStatus.startsWith("Idle.") && file) { 
         baseStatus = "Ready to process video.";
     }
+
 
     if (file.type === "application/octet-stream" || !file.type) {
         const videoWarning = "Warning: Main video file type is generic or undetermined. AssemblyAI might struggle with its audio if a separate audio file isn't provided. Visual playback might also be affected.";
@@ -240,7 +213,20 @@ const App: React.FC = () => {
         }
     }
     setTranscriptionStatus(baseStatus);
-    setIsPlaying(false); setCurrentTime(0); setVideoDuration(0); setActiveSegmentIndex(-1);
+    // Reset playback related states when new video is uploaded
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setVideoDuration(0);
+    setActiveSegmentIndex(-1);
+    // Also reset AI processing states
+    setScriptSegments([]);
+    setContextualImages({});
+    setActiveContextualImageSrc(null);
+    setAssemblyAiStatus('idle');
+    setAssemblyAiTranscriptId(null);
+    setIsProcessingAI(false);
+    if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
+
   };
   
   const handleTranscriptionAudioUpload = (file: File) => {
@@ -248,69 +234,20 @@ const App: React.FC = () => {
     setTranscriptionStatus(prevStatus => {
       const audioMsg = "Optional audio for transcription uploaded.";
       if (prevStatus.includes(audioMsg)) return prevStatus; 
-      if (prevStatus.startsWith("Idle.") || (inputMode === 'file' && !mainVideoFile) || (inputMode === 'url' && !mainVideoUrlInput)) {
-        return audioMsg + " Provide main video input to proceed.";
-      }
+      if (prevStatus.startsWith("Idle.") || (!mainVideoFile && !selectedPreset)) return audioMsg + " Upload main video or load preset to proceed.";
       return prevStatus.endsWith(".") ? prevStatus + " " + audioMsg : prevStatus + ". " + audioMsg;
     });
   };
 
-  const handleMainVideoUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = e.target.value;
-    setMainVideoUrlInput(url);
-    if (url && (url.startsWith('http://') || url.startsWith('https://')) && url.toLowerCase().endsWith('.mp4')) {
-        setMainVideoSrc(url);
-        setIsVideoReadyToPlay(false); 
-        setTranscriptionStatus("Main video URL set. Ready to process if other configurations are valid.");
-        setIsPlaying(false); setCurrentTime(0); setVideoDuration(0); setActiveSegmentIndex(-1);
-    } else if (!url) {
-        setMainVideoSrc(null);
-        setTranscriptionStatus("Main video URL cleared.");
-    } else {
-        setMainVideoSrc(null);
-        setTranscriptionStatus("Invalid or incomplete main video URL. Must be .mp4 and start with http/https.");
-    }
-  };
-
-  const handleTranscriptionAudioUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = e.target.value;
-    setTranscriptionAudioUrlInput(url);
-     if (url && (url.startsWith('http://') || url.startsWith('https://')) && url.toLowerCase().endsWith('.mp3')) {
-        setTranscriptionStatus(prev => prev + " Optional audio URL set.");
-    } else if (url && !((url.startsWith('http://') || url.startsWith('https://')) && url.toLowerCase().endsWith('.mp3'))) {
-        setTranscriptionStatus(prev => prev + " Warning: Optional audio URL seems invalid (must be .mp3 and start with http/https).");
-    }
-  };
-  
-  const handlePresetNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const numStr = e.target.value;
-    setPresetNumberInput(numStr);
-    if (isValidPresetNumber(numStr)) {
-        setMainVideoSrc(`${PRESET_BASE_URL}${numStr}.mp4`);
-        setIsVideoReadyToPlay(false);
-        setTranscriptionStatus(`Preset ${numStr} selected. Video: ${numStr}.mp4, Audio: ${numStr}.mp3. Ready to process.`);
-        setIsPlaying(false); setCurrentTime(0); setVideoDuration(0); setActiveSegmentIndex(-1);
-    } else if (!numStr) {
-        setMainVideoSrc(null);
-        setTranscriptionStatus("Preset number cleared.");
-    } else {
-        setMainVideoSrc(null);
-        setTranscriptionStatus("Invalid preset number. Must be a positive integer.");
-    }
-  };
-
-
-  const resetAIStates = useCallback(() => {
+  const resetAIStates = useCallback((forNewVideo: boolean = true) => {
     setScriptSegments([]);
     setContextualImages({});
     setActiveContextualImageSrc(null);
-    setTranscriptionAudioFile(null); 
-    setTranscriptionAudioUrlInput("");
-    setPresetNumberInput("");
-    // setMainVideoFile(null); // Keep main video if user just wants to re-process
-    // setMainVideoUrlInput("");
-    // if (inputMode !== 'preset') setMainVideoSrc(null); // Keep mainVideoSrc if it was from preset and still valid
-
+    if (forNewVideo) { // Only reset these if it's a completely new video/preset scenario
+        setTranscriptionAudioFile(null); 
+        // Do not reset mainVideoFile or mainVideoSrc here as they are set by upload/preset
+    }
+    
     setTranscriptionStatus(buildInitialStatus());
 
     setIsProcessingAI(false);
@@ -320,14 +257,75 @@ const App: React.FC = () => {
     setAssemblyAiStatus('idle');
     setAssemblyAiTranscriptId(null);
     if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
+    
     setIsPlaying(false);
     setCurrentTime(0);
+    // setVideoDuration will be set by onLoadedMetadata
+    if (forNewVideo) {
+        setPresetInput("");
+        setSelectedPreset(null);
+        setCurrentPresetStatus("");
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geminiApiKeyExists, inputMode, mainVideoFile, mainVideoUrlInput, isPixabayConfigured, presetNumberInput]); 
+  }, [geminiApiKeyExists]); 
   
   useEffect(() => {
-    resetAIStates();
+    // Initial full reset when app loads, considering API key status
+    resetAIStates(true);
   }, [resetAIStates]); 
+
+  const handlePresetInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setPresetInput(event.target.value);
+    setCurrentPresetStatus(""); // Clear status on new input
+  };
+
+  const handleLoadPreset = () => {
+    const id = parseInt(presetInput, 10);
+    const preset = PRESET_VIDEOS.find(p => p.id === id);
+
+    if (preset) {
+      setIsPresetLoading(true);
+      setCurrentPresetStatus(`Loading preset '${preset.name}'...`);
+      
+      // Simulate loading delay
+      setTimeout(() => {
+        const mockFile = new File(
+          [`dummy video content for ${preset.name}`], 
+          preset.name, 
+          { type: preset.mockFileType, lastModified: Date.now() }
+        );
+        setMainVideoFile(mockFile);
+        
+        // For local placeholders, URL.createObjectURL might not be ideal
+        // as the content isn't a real video.
+        // Using the placeholder src directly. The video element might show an error
+        // or nothing, but the app logic will proceed as if a video is loaded.
+        if (mainVideoSrc) URL.revokeObjectURL(mainVideoSrc); // Revoke old src if it was an object URL
+        setMainVideoSrc(preset.src); // Use placeholder string src
+
+        setSelectedPreset(preset);
+        setTranscriptionAudioFile(null); // Clear any custom audio
+
+        // Reset states for new video
+        setScriptSegments([]);
+        setContextualImages({});
+        setActiveContextualImageSrc(null);
+        setAssemblyAiStatus('idle');
+        setAssemblyAiTranscriptId(null);
+        setIsProcessingAI(false);
+        setIsPlaying(false);
+        setCurrentTime(0);
+        setVideoDuration(0); // Will be updated by onLoadedMetadata if video src is valid
+        setActiveSegmentIndex(-1);
+        
+        setTranscriptionStatus(`Preset '${preset.name}' loaded. Ready to process video.`);
+        setCurrentPresetStatus(`Preset '${preset.name}' is loaded.`);
+        setIsPresetLoading(false);
+      }, 1000); // 1 second simulated load time
+    } else {
+      setCurrentPresetStatus("Invalid preset number. Please choose from available presets.");
+    }
+  };
 
 
   const handleStartEditUserUrl = (segmentIndex: number) => {
@@ -378,7 +376,7 @@ const App: React.FC = () => {
   };
   
   const fetchImageFromPixabay = async (query: string): Promise<string | null> => {
-    if (!query || !isPixabayConfigured) return null;
+    if (!query || !PIXABAY_API_KEY || PIXABAY_API_KEY === "YOUR_PIXABAY_API_KEY") return null;
     try {
       const response = await fetch(`${PIXABAY_URL}&q=${encodeURIComponent(query)}`);
       if (!response.ok) {
@@ -387,7 +385,7 @@ const App: React.FC = () => {
       }
       const data = await response.json();
       if (data.hits && data.hits.length > 0) {
-        return data.hits[0].webformatURL; 
+        return data.hits[0].webformatURL; // Or largeImageURL for higher quality
       }
       return null;
     } catch (error) {
@@ -437,7 +435,7 @@ const App: React.FC = () => {
         setIsProcessingAI(false);
         return;
     }
-    if (!isPixabayConfigured) {
+    if (!PIXABAY_API_KEY || PIXABAY_API_KEY === "YOUR_PIXABAY_API_KEY") {
         setTranscriptionStatus(prev => prev + " Cannot fetch images: Pixabay API Key missing or invalid.");
         setIsProcessingAI(false);
         return;
@@ -472,100 +470,82 @@ const App: React.FC = () => {
           updatedSegments[i].pixabayFetchStatus = 'fetched';
           newContextualImages[i] = { pixabayUrl: imageUrl, userOverriddenUrl: null, displayUrl: imageUrl };
         } else {
-          updatedSegments[i].pixabayFetchStatus = 'failed_fetch'; 
+          updatedSegments[i].pixabayFetchStatus = 'failed_fetch'; // Or 'no_image_found' if API was ok but no results
           newContextualImages[i] = null;
         }
       } else {
-        updatedSegments[i].pixabayFetchStatus = 'no_image_found';
+        updatedSegments[i].pixabayFetchStatus = 'no_image_found'; // No suggestion means no image
         newContextualImages[i] = null;
       }
       setScriptSegments([...updatedSegments]); 
       setContextualImages(prev => ({...prev, ...newContextualImages})); 
     }
-    setContextualImages(newContextualImages); 
+    setContextualImages(newContextualImages); // Ensure final state is set
     setTranscriptionStatus("Visual processing complete.");
     setIsProcessingAI(false);
   };
   
   const handleTranscribeAndProcessSentences = async () => {
-    if (inputMode === 'file' && !mainVideoFile) { 
-      setTranscriptionStatus("Error: Main video file is missing."); return;
-    }
-    if (inputMode === 'url' && (!mainVideoUrlInput || !mainVideoUrlInput.startsWith('http'))) {
-      setTranscriptionStatus("Error: Main video URL is missing or invalid."); return;
-    }
-    if (inputMode === 'preset' && (!presetNumberInput || !isValidPresetNumber(presetNumberInput))) {
-      setTranscriptionStatus("Error: Preset number is missing or invalid."); return;
+    if (!mainVideoFile) { 
+      setTranscriptionStatus("Error: Main video is missing. Please upload or select a preset.");
+      return;
     }
     if (!ASSEMBLYAI_API_KEY) {
-      setTranscriptionStatus("Error: AssemblyAI API Key missing."); return;
+      setTranscriptionStatus("Error: AssemblyAI API Key missing.");
+      return;
     }
     if (!geminiApiKeyExists || !aiRef.current) {
-      setTranscriptionStatus("Error: Gemini API Key missing. Cannot proceed with visual suggestions."); return;
+        setTranscriptionStatus("Error: Gemini API Key missing. Cannot proceed with visual suggestions.");
+        return;
     }
-    if (!isPixabayConfigured) {
-      setTranscriptionStatus("Error: Pixabay API Key missing or invalid. Cannot fetch images."); return;
+    if (!PIXABAY_API_KEY || PIXABAY_API_KEY === "YOUR_PIXABAY_API_KEY") {
+        setTranscriptionStatus("Error: Pixabay API Key missing or invalid. Cannot fetch images.");
+        return;
     }
 
+
+    const fileToTranscribe = transcriptionAudioFile || mainVideoFile; 
+
     setIsProcessingAI(true);
-    setScriptSegments([]);
+    // const currentStatus = buildInitialStatus(); // Status before processing starts
+    setScriptSegments([]); // Clear previous segments immediately
     setContextualImages({});
     setActiveContextualImageSrc(null);
     setActiveSegmentIndex(-1);
     setEditingUrlForSegmentKey(null);
     setCurrentUserInputUrl("");
-    setAssemblyAiStatus('idle');
+    setAssemblyAiStatus('idle'); // Reset AssemblyAI status for new processing
     setAssemblyAiTranscriptId(null);
     if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
     
-    let audio_url_for_transcription: string | null = null;
-    let operationDescription = "";
+    // Set status to indicate start of AssemblyAI processing
+    const audioSourceName = transcriptionAudioFile ? 'custom audio' : (selectedPreset ? `preset video '${selectedPreset.name}' audio` : 'video audio');
+    setTranscriptionStatus(`AssemblyAI: Uploading ${audioSourceName}...`);
+    setAssemblyAiStatus('uploading');
+
+
+    const formData = new FormData();
+    formData.append('file', fileToTranscribe);
 
     try {
-      if (inputMode === 'file') {
-        const fileToTranscribe = transcriptionAudioFile || mainVideoFile;
-        if (!fileToTranscribe) { throw new Error("No file available for transcription."); }
-        operationDescription = `AssemblyAI: Uploading ${transcriptionAudioFile ? 'custom audio file' : 'main video file'}...`;
-        setTranscriptionStatus(operationDescription);
-        setAssemblyAiStatus('uploading');
+      const uploadResponse = await fetch(ASSEMBLYAI_UPLOAD_URL, {
+        method: 'POST',
+        headers: { authorization: ASSEMBLYAI_API_KEY },
+        body: formData,
+      });
 
-        const formData = new FormData();
-        formData.append('file', fileToTranscribe);
-        const uploadResponse = await fetch(ASSEMBLYAI_UPLOAD_URL, {
-          method: 'POST',
-          headers: { authorization: ASSEMBLYAI_API_KEY },
-          body: formData,
-        });
-        if (!uploadResponse.ok) {
-          const errorData = await uploadResponse.json();
-          throw new Error(`AssemblyAI Upload Failed: ${uploadResponse.status} - ${errorData.error || 'Unknown upload error'}`);
-        }
-        const uploadData = await uploadResponse.json();
-        audio_url_for_transcription = uploadData.upload_url;
-        if (!audio_url_for_transcription) throw new Error("AssemblyAI Upload Error: No upload_url received.");
-        operationDescription = `AssemblyAI: ${transcriptionAudioFile ? 'Custom audio file' : 'Video file audio'} uploaded. Submitting for transcription...`;
-      
-      } else if (inputMode === 'url') {
-        if (transcriptionAudioUrlInput && transcriptionAudioUrlInput.startsWith('http')) {
-          audio_url_for_transcription = transcriptionAudioUrlInput;
-          operationDescription = `AssemblyAI: Using custom audio URL for transcription...`;
-        } else if (mainVideoUrlInput && mainVideoUrlInput.startsWith('http')) {
-          audio_url_for_transcription = mainVideoUrlInput;
-          operationDescription = `AssemblyAI: Using main video URL for transcription...`;
-        } else {
-          throw new Error("No valid URL available for transcription.");
-        }
-      } else { // inputMode === 'preset'
-        if (presetNumberInput && isValidPresetNumber(presetNumberInput)) {
-          audio_url_for_transcription = `${PRESET_BASE_URL}${presetNumberInput}.mp3`;
-          operationDescription = `AssemblyAI: Using preset audio URL ${presetNumberInput}.mp3 for transcription...`;
-        } else {
-          throw new Error("No valid preset number for transcription.");
-        }
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json();
+        throw new Error(`AssemblyAI Upload Failed: ${uploadResponse.status} - ${errorData.error || 'Unknown upload error'}`);
+      }
+      const uploadData = await uploadResponse.json();
+      const audio_url_for_transcription = uploadData.upload_url; 
+
+      if (!audio_url_for_transcription) {
+        throw new Error("AssemblyAI Upload Error: No upload_url received.");
       }
 
-
-      setTranscriptionStatus(operationDescription);
+      setTranscriptionStatus(`AssemblyAI: ${audioSourceName} uploaded. Submitting for transcription...`);
       const transcriptResponse = await fetch(ASSEMBLYAI_TRANSCRIPT_URL, {
         method: 'POST',
         headers: {
@@ -593,40 +573,18 @@ const App: React.FC = () => {
   };
 
   const handlePlayPause = () => {
-    if (!mainVideoRef.current || !allContextualDataProcessed || !isVideoReadyToPlay) return;
+    if (!mainVideoRef.current || !allContextualDataProcessed) return;
     if (isPlaying) {
       mainVideoRef.current.pause();
     } else {
       mainVideoRef.current.play().catch(error => {
         console.error("Error playing video:", error);
         setTranscriptionStatus(`Playback Error: ${error.message}. Ensure you've interacted with the page.`);
-        setIsPlaying(false);
+        setIsPlaying(false); 
       });
     }
   };
   
-  const handleReplay = () => {
-    if (mainVideoRef.current && isVideoReadyToPlay) {
-        mainVideoRef.current.currentTime = 0;
-        mainVideoRef.current.play().catch(error => {
-            console.error("Error replaying video:", error);
-            setTranscriptionStatus(`Playback Error: ${error.message}.`);
-            setIsPlaying(false);
-        });
-    }
-  };
-
-  const handleResetPlayback = () => {
-    if (mainVideoRef.current) {
-        mainVideoRef.current.pause();
-        mainVideoRef.current.currentTime = 0;
-        setIsPlaying(false);
-        setCurrentTime(0);
-        setActiveSegmentIndex(-1);
-        setActiveContextualImageSrc(null);
-    }
-  };
-
   const handleTimeUpdate = useCallback(() => {
     if (!mainVideoRef.current) return;
     const newTime = mainVideoRef.current.currentTime;
@@ -639,7 +597,7 @@ const App: React.FC = () => {
   }, [scriptSegments, activeSegmentIndex]);
 
   const handleSeek = (time: number) => {
-    if (mainVideoRef.current && allContextualDataProcessed && isVideoReadyToPlay) {
+    if (mainVideoRef.current && allContextualDataProcessed) {
         mainVideoRef.current.currentTime = time;
         const currentSegmentIdx = scriptSegments.findIndex(segment => time >= segment.startTime && time < segment.endTime);
         if (currentSegmentIdx !== activeSegmentIndex) {
@@ -660,21 +618,16 @@ const App: React.FC = () => {
         setVideoDuration(videoNode.duration);
         setCurrentTime(videoNode.currentTime); 
       };
-      const onCanPlayThrough = () => setIsVideoReadyToPlay(true);
-      const onWaiting = () => setIsVideoReadyToPlay(false); 
-      const onPlaying = () => setIsVideoReadyToPlay(true); 
 
       videoNode.addEventListener('play', onPlay);
       videoNode.addEventListener('pause', onPause);
       videoNode.addEventListener('ended', onEnded);
       videoNode.addEventListener('timeupdate', handleTimeUpdate);
       videoNode.addEventListener('loadedmetadata', onLoadedMeta);
-      videoNode.addEventListener('canplaythrough', onCanPlayThrough);
-      videoNode.addEventListener('waiting', onWaiting);
-      videoNode.addEventListener('playing', onPlaying);
       
-      if (videoNode.readyState >= 1) onLoadedMeta();
-      if (videoNode.readyState >= 4) onCanPlayThrough(); 
+      if (videoNode.readyState >= 1) { 
+        onLoadedMeta();
+      }
 
       return () => {
         videoNode.removeEventListener('play', onPlay);
@@ -682,9 +635,6 @@ const App: React.FC = () => {
         videoNode.removeEventListener('ended', onEnded);
         videoNode.removeEventListener('timeupdate', handleTimeUpdate);
         videoNode.removeEventListener('loadedmetadata', onLoadedMeta);
-        videoNode.removeEventListener('canplaythrough', onCanPlayThrough);
-        videoNode.removeEventListener('waiting', onWaiting);
-        videoNode.removeEventListener('playing', onPlaying);
       };
     }
   }, [mainVideoSrc, handleTimeUpdate]); 
@@ -697,12 +647,14 @@ const App: React.FC = () => {
     return `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
+  const currentPresetValid = PRESET_VIDEOS.some(p => p.id === parseInt(presetInput, 10));
+
 
   return (
     <div className="min-h-screen bg-gray-800 text-gray-100 flex flex-col items-center p-4 selection:bg-purple-500 selection:text-white">
       <header className="w-full max-w-5xl mb-6 text-center">
-        <h1 className="text-4xl font-bold text-purple-400">Ladki AI Video Visualizer</h1>
-        <p className="text-gray-400 mt-1">Provide video/audio by file upload, URL, or preset number, get transcription, and see AI-suggested contextual images from Pixabay.</p>
+        <h1 className="text-4xl font-bold text-purple-400">AI Video Visualizer</h1>
+        <p className="text-gray-400 mt-1">Upload a video or select a preset, get it transcribed, and see AI-suggested contextual images synced to the dialogue.</p>
       </header>
 
       {!geminiApiKeyExists && (
@@ -710,12 +662,7 @@ const App: React.FC = () => {
               <strong>Critical Error:</strong> Gemini API Key (process.env.API_KEY) is not set. Visual suggestions will not function. Please set this environment variable.
           </div>
       )}
-      {!isPixabayConfigured && PIXABAY_API_KEY === "50577453-acd15cf6b8242af889a9c7b1d" && ( 
-          <div className="w-full max-w-3xl p-4 mb-4 bg-yellow-700 text-yellow-100 border border-yellow-600 rounded-md text-center">
-              <strong>Configuration Note:</strong> The Pixabay API Key has been updated with the one you provided. Ensure it's active and has sufficient quota.
-          </div>
-      )}
-       {!isPixabayConfigured && PIXABAY_API_KEY !== "50577453-acd15cf6b8242af889a9c7b1d" && ( 
+      {(!PIXABAY_API_KEY || PIXABAY_API_KEY === "YOUR_PIXABAY_API_KEY") && (
           <div className="w-full max-w-3xl p-4 mb-4 bg-red-800 text-red-100 border border-red-600 rounded-md text-center">
               <strong>Critical Error:</strong> Pixabay API Key is not set or is invalid in the code. Image fetching will not function. Please update <code>App.tsx</code>.
           </div>
@@ -729,83 +676,72 @@ const App: React.FC = () => {
 
       <main className="w-full max-w-5xl flex flex-col md:flex-row gap-6">
         <div className="md:w-1/3 space-y-4 bg-gray-700 p-4 rounded-lg shadow-xl">
-          <h2 className="text-xl font-semibold text-purple-300 border-b border-purple-400 pb-2">1. Input Configuration</h2>
+          <h2 className="text-xl font-semibold text-purple-300 border-b border-purple-400 pb-2">Configuration</h2>
           
-          <div className="space-y-1">
-            <label className="block text-sm font-medium text-gray-300">Input Source:</label>
-            <div className="flex items-center space-x-3">
-              <label className="flex items-center space-x-1 cursor-pointer">
-                <input type="radio" name="inputMode" value="file" checked={inputMode === 'file'} onChange={() => handleInputModeChange('file')} className="form-radio text-purple-500 bg-gray-800 border-gray-600 focus:ring-purple-500"/>
-                <span className="text-sm">Upload Files</span>
-              </label>
-              <label className="flex items-center space-x-1 cursor-pointer">
-                <input type="radio" name="inputMode" value="url" checked={inputMode === 'url'} onChange={() => handleInputModeChange('url')} className="form-radio text-purple-500 bg-gray-800 border-gray-600 focus:ring-purple-500"/>
-                <span className="text-sm">Use URLs</span>
-              </label>
-              <label className="flex items-center space-x-1 cursor-pointer">
-                <input type="radio" name="inputMode" value="preset" checked={inputMode === 'preset'} onChange={() => handleInputModeChange('preset')} className="form-radio text-purple-500 bg-gray-800 border-gray-600 focus:ring-purple-500"/>
-                <span className="text-sm">Use Preset</span>
-              </label>
+          {/* Preset Selection Area */}
+          <div className="space-y-2 p-3 bg-gray-600 rounded-md">
+            <label htmlFor="presetInput" className="block text-sm font-medium text-gray-300">
+              Use Preset Video (e.g., 1-{PRESET_VIDEOS.length})
+            </label>
+            <div className="flex items-center space-x-2">
+              <input
+                type="number"
+                id="presetInput"
+                value={presetInput}
+                onChange={handlePresetInputChange}
+                placeholder={`1-${PRESET_VIDEOS.length}`}
+                min="1"
+                max={PRESET_VIDEOS.length.toString()}
+                className="w-20 p-1.5 text-sm bg-gray-800 text-gray-200 border border-gray-500 rounded focus:ring-1 focus:ring-purple-500 focus:border-purple-500"
+                aria-describedby="preset-status"
+              />
+              <button
+                onClick={handleLoadPreset}
+                disabled={!currentPresetValid || isPresetLoading}
+                className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-all duration-150 ease-in-out
+                            ${(!currentPresetValid || isPresetLoading) ? 'bg-gray-500 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+              >
+                {isPresetLoading ? 'Loading...' : 'Load Preset'}
+              </button>
             </div>
+            {currentPresetStatus && (
+              <p id="preset-status" className={`text-xs mt-1 ${currentPresetStatus.includes("Invalid") || currentPresetStatus.includes("Error") ? 'text-red-400' : 'text-green-400'}`}>
+                {currentPresetStatus}
+              </p>
+            )}
+             <details className="text-xs text-gray-400 mt-1 cursor-pointer">
+                <summary className="hover:text-gray-300">Available Presets</summary>
+                <ul className="list-disc list-inside pl-2 mt-1 bg-gray-700 p-2 rounded">
+                    {PRESET_VIDEOS.map(p => <li key={p.id}><strong>{p.id}:</strong> {p.name} - <em>{p.description}</em></li>)}
+                </ul>
+            </details>
           </div>
+          
+          <p className="text-center text-gray-400 text-sm">OR</p>
 
-          {inputMode === 'file' && (
-            <div className="space-y-3 pt-2 border-t border-gray-600">
-              <FileUpload
-                label="Main Video File"
-                onFileUpload={handleMainVideoUpload}
-                accept="video/*"
-                currentFile={mainVideoFile}
-                isRequired={true}
-              />
-              <FileUpload
-                label="Audio for Transcription (Optional)"
-                onFileUpload={handleTranscriptionAudioUpload}
-                accept="audio/*"
-                currentFile={transcriptionAudioFile}
-                isRequired={false}
-              />
-            </div>
-          )}
-
-          {inputMode === 'url' && (
-            <div className="space-y-3 pt-2 border-t border-gray-600">
-              <div>
-                <label htmlFor="mainVideoUrl" className="block text-sm font-medium text-gray-300 mb-1">Main Video URL (.mp4)</label>
-                <input type="url" id="mainVideoUrl" value={mainVideoUrlInput} onChange={handleMainVideoUrlChange} placeholder="https://example.com/video.mp4"
-                       className="w-full p-2 text-sm bg-gray-800 text-gray-200 border border-gray-600 rounded-md focus:ring-1 focus:ring-purple-500 focus:border-purple-500" />
-              </div>
-              <div>
-                <label htmlFor="transcriptionAudioUrl" className="block text-sm font-medium text-gray-300 mb-1">Audio URL for Transcription (Optional, .mp3)</label>
-                <input type="url" id="transcriptionAudioUrl" value={transcriptionAudioUrlInput} onChange={handleTranscriptionAudioUrlChange} placeholder="https://example.com/audio.mp3"
-                       className="w-full p-2 text-sm bg-gray-800 text-gray-200 border border-gray-600 rounded-md focus:ring-1 focus:ring-purple-500 focus:border-purple-500" />
-              </div>
-            </div>
-          )}
-
-          {inputMode === 'preset' && (
-             <div className="space-y-3 pt-2 border-t border-gray-600">
-              <div>
-                <label htmlFor="presetNumber" className="block text-sm font-medium text-gray-300 mb-1">Preset Number (e.g., 1, 2)</label>
-                <input type="text" id="presetNumber" value={presetNumberInput} onChange={handlePresetNumberChange} placeholder="Enter a number"
-                       className="w-full p-2 text-sm bg-gray-800 text-gray-200 border border-gray-600 rounded-md focus:ring-1 focus:ring-purple-500 focus:border-purple-500" />
-                {presetNumberInput && isValidPresetNumber(presetNumberInput) && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    Using: Video: <code>{PRESET_BASE_URL}{presetNumberInput}.mp4</code>, Audio: <code>{PRESET_BASE_URL}{presetNumberInput}.mp3</code>
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
+          <FileUpload
+            label="1. Upload Main Video"
+            onFileUpload={handleMainVideoUpload}
+            accept="video/*"
+            currentFile={mainVideoFile}
+            isRequired={!selectedPreset} // Required if no preset is selected
+          />
+          <FileUpload
+            label="2. Upload Audio for Transcription (Optional)"
+            onFileUpload={handleTranscriptionAudioUpload}
+            accept="audio/*"
+            currentFile={transcriptionAudioFile}
+            isRequired={false}
+          />
           
           <button
             onClick={handleTranscribeAndProcessSentences}
             disabled={!canStartProcessing || isProcessingAI}
-            className={`w-full px-4 py-2 text-base font-semibold rounded-md transition-all duration-150 ease-in-out mt-3
+            className={`w-full px-4 py-2 text-base font-semibold rounded-md transition-all duration-150 ease-in-out
                         ${canStartProcessing && !isProcessingAI ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-500 text-gray-400 cursor-not-allowed'}`}
             aria-live="polite"
           >
-            {isProcessingAI ? 'Processing AI...' : '2. Process Inputs & Visuals'}
+            {isProcessingAI ? 'Processing AI...' : '3. Process Video & Visuals'}
           </button>
           <div className="text-xs text-gray-400 p-2 bg-gray-800 rounded min-h-[50px] overflow-y-auto max-h-[150px]">
             Status: <span className="font-medium text-gray-300">{transcriptionStatus}</span>
@@ -814,40 +750,23 @@ const App: React.FC = () => {
 
         <div className="md:w-2/3 flex flex-col items-center">
           <VideoStage 
-            ref={mainVideoRef}
+            ref={mainVideoRef} 
             mainVideoSrc={mainVideoSrc}
             contextualImageSrc={activeContextualImageSrc}
-            isPlaying={isPlaying}
-            isVideoBuffering={mainVideoSrc !== null && !isVideoReadyToPlay}
+            isPlaying={isPlaying} 
           />
-          {mainVideoSrc && (
-            <div className="mt-4 w-full max-w-sm md:max-w-md space-y-2">
-                <div className="flex space-x-2">
-                    <button 
-                        onClick={handlePlayPause}
-                        disabled={!canStartPlayback}
-                        className={`flex-1 px-4 py-2 font-semibold rounded-md transition-colors duration-150
-                                    ${canStartPlayback ? (isPlaying ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-purple-600 hover:bg-purple-700') + ' text-white' : 'bg-gray-500 text-gray-400 cursor-not-allowed'}`}
-                    >
-                        {isPlaying ? 'Pause' : 'Play'}
-                    </button>
-                    <button
-                        onClick={handleReplay}
-                        disabled={!mainVideoSrc || !isVideoReadyToPlay} 
-                        className={`flex-1 px-4 py-2 font-semibold rounded-md transition-colors duration-150 ${(mainVideoSrc && isVideoReadyToPlay) ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-500 text-gray-400 cursor-not-allowed'}`}
-                    >
-                        Replay
-                    </button>
-                     <button
-                        onClick={handleResetPlayback}
-                        disabled={!mainVideoSrc} 
-                        className={`flex-1 px-4 py-2 font-semibold rounded-md transition-colors duration-150 ${mainVideoSrc ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-gray-500 text-gray-400 cursor-not-allowed'}`}
-                    >
-                        Reset Video
-                    </button>
-                </div>
+          {(mainVideoSrc || selectedPreset) && (
+            <div className="mt-4 w-full max-w-sm md:max-w-md">
+                <button 
+                    onClick={handlePlayPause}
+                    disabled={!canStartPlayback}
+                    className={`w-full px-4 py-2 font-semibold rounded-md transition-colors duration-150
+                                ${canStartPlayback ? 'bg-purple-600 hover:bg-purple-700 text-white' : 'bg-gray-500 text-gray-400 cursor-not-allowed'}`}
+                >
+                    {isPlaying ? 'Pause' : 'Play'}
+                </button>
                 {videoDuration > 0 && (
-                  <div className="text-center text-sm text-gray-400">
+                  <div className="mt-2 text-center text-sm text-gray-400">
                     {formatTime(currentTime)} / {formatTime(videoDuration)}
                   </div>
                 )}
@@ -864,8 +783,8 @@ const App: React.FC = () => {
               <div key={index} 
                    className={`p-3 rounded-md transition-all duration-200 ease-in-out border-l-4
                                ${activeSegmentIndex === index && isPlaying ? 'bg-purple-700 border-purple-300 shadow-lg' : 'bg-gray-600 border-gray-500 hover:bg-gray-500'}
-                               ${allContextualDataProcessed && isVideoReadyToPlay ? 'cursor-pointer' : 'cursor-default'}`}
-                   onClick={() => allContextualDataProcessed && isVideoReadyToPlay && handleSeek(segment.startTime)}
+                               ${allContextualDataProcessed ? 'cursor-pointer' : 'cursor-default'}`}
+                   onClick={() => allContextualDataProcessed && handleSeek(segment.startTime)}
               >
                 <p className="text-xs text-gray-400">
                   Time: {formatTime(segment.startTime)} - {formatTime(segment.endTime)}
