@@ -7,7 +7,7 @@ interface FileUploadProps {
   accept: string;
   currentFile: File | null;
   previewSrc?: string | null;
-  isRequired?: boolean; 
+  isRequired?: boolean; // More accurately: "is this input method required if no other source is provided?"
 }
 
 export const FileUpload: React.FC<FileUploadProps> = ({ 
@@ -31,8 +31,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({
   };
 
   return (
-    <div className="mb-3 bg-gray-700 p-3 rounded-md shadow">
-      <label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>
+    <div className="mb-3"> {/* Removed bg-gray-700 p-3 shadow from here, parent div in App.tsx now handles this styling */}
+      <label className="block text-xs font-medium text-gray-300 mb-0.5">{label}</label>
       <div className="flex items-center space-x-2">
         <button
           type="button"
@@ -48,8 +48,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({
           onChange={handleFileChange}
           accept={accept}
           className="hidden"
-          aria-hidden="true" // Hide from assistive tech as it's controlled by the button
-          tabIndex={-1} // Prevent tabbing to hidden input
+          aria-hidden="true"
+          tabIndex={-1}
         />
         {currentFile && (
           <span className="text-xs text-gray-400 truncate max-w-[150px] flex-shrink min-w-0">
@@ -63,7 +63,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         </div>
       )}
        {!currentFile && isRequired && ( 
-         <p className="text-xs text-yellow-400 mt-1">Required if no preset is active.</p>
+         <p className="text-xs text-yellow-400 mt-1">Required if no other source (URL/Preset) is active.</p>
        )}
        {!currentFile && !isRequired && (
          <p className="text-xs text-gray-500 mt-1">Optional</p>
