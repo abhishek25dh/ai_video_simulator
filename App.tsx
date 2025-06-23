@@ -890,6 +890,18 @@ const App: React.FC = () => {
         </div>
 
         <div className="md:w-2/3 flex flex-col items-center">
+          {mainVideoSrc && (
+            <div className="w-full flex justify-center mb-3">
+              <button
+                onClick={handleReplayVideo}
+                disabled={!canStartPlayback}
+                className={`px-6 py-2 text-sm font-semibold rounded-md transition-colors duration-150
+                            ${canStartPlayback ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-500 text-gray-400 cursor-not-allowed'}`}
+              >
+                Replay
+              </button>
+            </div>
+          )}
           <VideoStage 
             ref={mainVideoRef} 
             mainVideoSrc={mainVideoSrc}
@@ -911,18 +923,10 @@ const App: React.FC = () => {
                     {formatTime(currentTime)} / {formatTime(videoDuration)}
                   </div>
                 )}
-                <div className="mt-3 flex space-x-2">
-                    <button
-                        onClick={handleReplayVideo}
-                        disabled={!canStartPlayback}
-                        className={`flex-1 px-4 py-2 text-sm font-semibold rounded-md transition-colors duration-150
-                                    ${canStartPlayback ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-500 text-gray-400 cursor-not-allowed'}`}
-                    >
-                        Replay
-                    </button>
+                <div className="mt-3 flex justify-center"> {/* Centering the Reset button */}
                     <button
                         onClick={handleFullResetApp}
-                        className="flex-1 px-4 py-2 text-sm font-semibold rounded-md transition-colors duration-150 bg-red-600 hover:bg-red-700 text-white"
+                        className="px-6 py-2 text-sm font-semibold rounded-md transition-colors duration-150 bg-red-600 hover:bg-red-700 text-white" // Removed flex-1, giving specific padding
                     >
                         Reset Application
                     </button>
