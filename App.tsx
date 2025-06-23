@@ -31,8 +31,6 @@ const ASSEMBLYAI_TRANSCRIPT_URL = "https://api.assemblyai.com/v2/transcript";
 const PIXABAY_API_KEY = "YOUR_PIXABAY_API_KEY"; // <<< IMPORTANT: Replace with your actual Pixabay API Key
 const PIXABAY_URL = `https://pixabay.com/api/?key=${PIXABAY_API_KEY}&image_type=photo&orientation=horizontal&safesearch=true&per_page=3`;
 
-// PRESET_VIDEOS array and PresetVideo interface are removed for dynamic presets.
-
 const App: React.FC = () => {
   const [mainVideoFile, setMainVideoFile] = useState<File | null>(null);
   const [mainVideoSrc, setMainVideoSrc] = useState<string | null>(null);
@@ -48,7 +46,7 @@ const App: React.FC = () => {
 
   const [scriptSegments, setScriptSegments] = useState<ScriptSegment[]>([]);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
-  const [transcriptionStatus, setTranscriptionStatus] = useState("Idle. Upload video, load from URL, or select a preset to start.");
+  const [transcriptionStatus, setTranscriptionStatus] = useState("Idle. Use preset, or choose another method to load video/audio.");
 
   const [assemblyAiStatus, setAssemblyAiStatus] = useState<'idle' | 'uploading' | 'queued' | 'processing' | 'transcribing' | 'completed' | 'error'>('idle');
   const [assemblyAiTranscriptId, setAssemblyAiTranscriptId] = useState<string | null>(null);
@@ -72,6 +70,8 @@ const App: React.FC = () => {
   const [currentPresetStatus, setCurrentPresetStatus] = useState<string>("");
   const [loadedPresetId, setLoadedPresetId] = useState<number | null>(null);
 
+  const [activeAlternativeMethod, setActiveAlternativeMethod] = useState<'url' | 'file' | null>(null);
+
 
   useEffect(() => {
     if (process.env.API_KEY) {
@@ -86,7 +86,7 @@ const App: React.FC = () => {
   useEffect(() => {
     setTranscriptionStatus(buildInitialStatus());
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geminiApiKeyExists, mainVideoSrc, PIXABAY_API_KEY, ASSEMBLYAI_API_KEY, loadedPresetId, loadedMainVideoUrl, mainVideoFile, loadedTranscriptionAudioUrl]);
+  }, [geminiApiKeyExists, mainVideoSrc, PIXABAY_API_KEY, ASSEMBLYAI_API_KEY, loadedPresetId, loadedMainVideoUrl, mainVideoFile, loadedTranscriptionAudioUrl, activeAlternativeMethod]);
 
 
   const allContextualDataProcessed = assemblyAiStatus === 'completed' && !isProcessingAI && scriptSegments.length > 0;
@@ -174,10 +174,12 @@ const App: React.FC = () => {
          return `Preset ${loadedPresetId} loaded. Video: .../${loadedPresetId}.mp4, Audio: .../${loadedPresetId}.mp3. Ready to process.`;
     }
     if (mainVideoSrc) {
-        if (loadedMainVideoUrl) return `Video URL loaded. Ready to process.`;
-        if (mainVideoFile) return "Video file uploaded. Ready to process.";
+        if (loadedMainVideoUrl && activeAlternativeMethod === 'url') return `Video URL loaded. Ready to process.`;
+        if (mainVideoFile && activeAlternativeMethod === 'file') return "Video file uploaded. Ready to process.";
     }
-    return "Idle. Upload video, load from URL, or select a preset to start.";
+    if (activeAlternativeMethod === 'url') return "Enter video/audio URLs to load.";
+    if (activeAlternativeMethod === 'file') return "Upload video/audio files.";
+    return "Idle. Use preset, or choose another method to load video/audio.";
   }
 
   const resetUIAndAIStatesForNewSource = () => {
@@ -203,12 +205,16 @@ const App: React.FC = () => {
     setMainVideoFile(file);
     setMainVideoSrc(URL.createObjectURL(file));
     
+    // Clear other input methods
     setLoadedMainVideoUrl(null); 
     setMainVideoUrlInput("");     
     setLoadedPresetId(null);   
     setPresetInput("");
     setCurrentPresetStatus("");
-    setTranscriptionAudioFile(null); 
+    setActiveAlternativeMethod('file'); // Explicitly set file as active method
+    
+    // Clear transcription sources from other methods if main source changes
+    setTranscriptionAudioFile(null); // Keep or clear based on UX decision, for now clear if main video changes this way
     setLoadedTranscriptionAudioUrl(null); 
     setTranscriptionAudioUrlInput("");   
 
@@ -226,11 +232,15 @@ const App: React.FC = () => {
     setMainVideoSrc(mainVideoUrlInput.trim());
     setLoadedMainVideoUrl(mainVideoUrlInput.trim());
 
+    // Clear other input methods
     setMainVideoFile(null);    
     setLoadedPresetId(null);   
     setPresetInput("");
     setCurrentPresetStatus("");
-    setTranscriptionAudioFile(null);
+    setActiveAlternativeMethod('url'); // Explicitly set URL as active method
+
+    // Clear transcription sources from other methods if main source changes
+    setTranscriptionAudioFile(null); // Keep or clear, for now clear
     setLoadedTranscriptionAudioUrl(null);
     setTranscriptionAudioUrlInput("");
 
@@ -240,15 +250,14 @@ const App: React.FC = () => {
   
   const handleTranscriptionAudioUpload = (file: File) => {
     setTranscriptionAudioFile(file);
+    // Clear other audio sources
     setLoadedTranscriptionAudioUrl(null); 
     setTranscriptionAudioUrlInput("");   
-    // If a preset was loaded, its audio URL is overridden by this file.
-    // The main video from preset (if any) remains. loadedPresetId is not cleared here.
-
+    
     setTranscriptionStatus(prevStatus => {
       const audioMsg = "Optional audio file for transcription uploaded.";
       if (prevStatus.includes(audioMsg)) return prevStatus; 
-      if (!mainVideoSrc) return audioMsg + " Load main video (file, URL, or preset) to proceed.";
+      if (!mainVideoSrc && activeAlternativeMethod !== 'file') return audioMsg + " Load main video using a selected method to proceed.";
       return prevStatus.endsWith(".") ? prevStatus + " " + audioMsg : prevStatus + ". " + audioMsg;
     });
   };
@@ -259,16 +268,68 @@ const App: React.FC = () => {
         return;
     }
     setLoadedTranscriptionAudioUrl(transcriptionAudioUrlInput.trim());
+    // Clear other audio sources
     setTranscriptionAudioFile(null); 
-    // If a preset was loaded, its audio URL is overridden by this URL.
-    // The main video from preset (if any) remains. loadedPresetId is not cleared here.
-
+    
     setTranscriptionStatus(prevStatus => {
       const audioMsg = "Optional audio URL for transcription loaded.";
       if (prevStatus.includes(audioMsg)) return prevStatus;
-      if (!mainVideoSrc) return audioMsg + " Load main video (file, URL, or preset) to proceed.";
+      if (!mainVideoSrc && activeAlternativeMethod !== 'url') return audioMsg + " Load main video using a selected method to proceed.";
       return prevStatus.endsWith(".") ? prevStatus + " " + audioMsg : prevStatus + ". " + audioMsg;
     });
+  };
+
+  const resetAllInputMethods = (except?: 'preset' | 'url' | 'file') => {
+    if (except !== 'preset') {
+        setPresetInput("");
+        setLoadedPresetId(null);
+        setCurrentPresetStatus("");
+    }
+    if (except !== 'url') {
+        setMainVideoUrlInput("");
+        setTranscriptionAudioUrlInput("");
+        setLoadedMainVideoUrl(null);
+        // setLoadedTranscriptionAudioUrl(null); // This is often shared or specifically set
+    }
+    if (except !== 'file') {
+        setMainVideoFile(null);
+        // setTranscriptionAudioFile(null); // This is often shared or specifically set
+    }
+
+    // Smartly clear mainVideoSrc unless it belongs to the 'except' method
+    if (except === 'preset' && (mainVideoFile || loadedMainVideoUrl)) setMainVideoSrc(null);
+    else if (except === 'url' && (mainVideoFile || (loadedPresetId && !mainVideoUrlInput))) setMainVideoSrc(null);
+    else if (except === 'file' && (loadedMainVideoUrl || (loadedPresetId && !mainVideoFile))) setMainVideoSrc(null);
+    else if (!except) { // Clear all if no exception
+        if (mainVideoSrc && mainVideoSrc.startsWith('blob:')) URL.revokeObjectURL(mainVideoSrc);
+        setMainVideoSrc(null);
+    }
+    
+    // Always clear specific audio sources if changing main input type.
+    // This could be refined based on desired UX (e.g., keep optional audio if user just switches main video type).
+    if (except !== 'url') setLoadedTranscriptionAudioUrl(null);
+    if (except !== 'file') setTranscriptionAudioFile(null);
+  };
+
+
+  const handleShowAlternativeMethod = (method: 'url' | 'file') => {
+    if (activeAlternativeMethod === method) { // Toggle off if clicking the same button
+        setActiveAlternativeMethod(null);
+        // Optionally, clear the inputs of the method being hidden
+        // if (method === 'url') { setMainVideoUrlInput(""); setTranscriptionAudioUrlInput(""); }
+        // if (method === 'file') { setMainVideoFile(null); setTranscriptionAudioFile(null); }
+        // For now, let's keep them so user can toggle back. 
+        // Main video src clearing handled by resetAllInputMethods if needed.
+    } else {
+        setActiveAlternativeMethod(method);
+        resetAllInputMethods(method); // Clear other methods
+        if (mainVideoSrc) { // If there was a video source from another method, clear it.
+            if (mainVideoSrc.startsWith('blob:')) URL.revokeObjectURL(mainVideoSrc);
+            setMainVideoSrc(null);
+        }
+    }
+    resetUIAndAIStatesForNewSource(); // Reset processing state
+    // buildInitialStatus will be called by useEffect
   };
 
 
@@ -277,12 +338,15 @@ const App: React.FC = () => {
     setContextualImages({});
     setActiveContextualImageSrc(null);
     if (forNewVideo) { 
-        setTranscriptionAudioFile(null); 
-        setLoadedTranscriptionAudioUrl(null);
-        setTranscriptionAudioUrlInput("");
-        setLoadedPresetId(null); // Clear loaded preset if it's considered a new video source context
-        // setPresetInput(""); // Cleared by individual handlers
-        // setCurrentPresetStatus(""); // Cleared by individual handlers
+        // Clearing these here might conflict with user's intent if they are just reprocessing
+        // The specific input handlers (handleMainVideoUpload, handleLoadPreset, etc.)
+        // are now more responsible for clearing other input sources.
+        // setTranscriptionAudioFile(null); 
+        // setLoadedTranscriptionAudioUrl(null);
+        // setTranscriptionAudioUrlInput("");
+        // setLoadedPresetId(null); 
+        // setPresetInput(""); 
+        // setCurrentPresetStatus("");
     }
     
     setTranscriptionStatus(buildInitialStatus());
@@ -297,15 +361,11 @@ const App: React.FC = () => {
     
     setIsPlaying(false);
     setCurrentTime(0);
-
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geminiApiKeyExists, PIXABAY_API_KEY, ASSEMBLYAI_API_KEY]); 
+  }, [geminiApiKeyExists, PIXABAY_API_KEY, ASSEMBLYAI_API_KEY, activeAlternativeMethod]); 
   
-  // This initial resetAIStates might be too aggressive if buildInitialStatus relies on states being set.
-  // Consider if this useEffect for resetAIStates is still needed or if specific handlers cover it.
-  // For now, let's keep it and see. It is set to run once on mount due to `resetAIStates` in dependency array.
   useEffect(() => {
-    resetAIStates(true);
+    resetAIStates(true); // Reset on mount or when key dependencies for AI change.
   }, [resetAIStates]); 
 
   const handlePresetInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -324,21 +384,23 @@ const App: React.FC = () => {
     setIsPresetLoading(true);
     setCurrentPresetStatus(`Loading preset ${id}...`);
     
-    setTimeout(() => {
+    setTimeout(() => { // Simulate network delay
       const videoUrl = `https://darkslategray-octopus-566678.hostingersite.com/${id}.mp4`;
       const audioUrl = `https://darkslategray-octopus-566678.hostingersite.com/${id}.mp3`;
       
       if (mainVideoSrc && mainVideoSrc.startsWith('blob:')) URL.revokeObjectURL(mainVideoSrc);
       
       setMainVideoSrc(videoUrl);
-      setLoadedMainVideoUrl(videoUrl); 
+      setLoadedMainVideoUrl(videoUrl); // Presets use URL loading internally for video
       setLoadedTranscriptionAudioUrl(audioUrl); 
       setLoadedPresetId(id);
 
+      // Clear other input methods
       setMainVideoFile(null); 
       setTranscriptionAudioFile(null);
-      setMainVideoUrlInput("");     
+      setMainVideoUrlInput(""); // Clear direct URL input if preset is used
       setTranscriptionAudioUrlInput("");
+      setActiveAlternativeMethod(null); // Hide alternative methods
 
       resetUIAndAIStatesForNewSource();
       const statusMsg = `Preset ${id} loaded. Video: .../${id}.mp4, Audio: .../${id}.mp3. Ready to process.`;
@@ -508,7 +570,7 @@ const App: React.FC = () => {
   
   const handleTranscribeAndProcessSentences = async () => {
     if (!mainVideoSrc) { 
-      setTranscriptionStatus("Error: Main video source is missing. Please upload, load URL, or select a preset.");
+      setTranscriptionStatus("Error: Main video source is missing. Please use a preset, load URL, or upload a file.");
       return;
     }
     if (!ASSEMBLYAI_API_KEY) {
@@ -525,9 +587,6 @@ const App: React.FC = () => {
     }
 
     setIsProcessingAI(true);
-    // Do not call resetUIAndAIStatesForNewSource() here if a preset is already loaded, 
-    // as it might clear the loaded preset URLs prematurely.
-    // Instead, ensure specific parts are reset:
     setScriptSegments([]);
     setContextualImages({});
     setActiveContextualImageSrc(null);
@@ -540,27 +599,27 @@ const App: React.FC = () => {
     let audioSourceForAssembly: { url: string } | { file: File } | null = null;
     let audioSourceName = "";
 
+    // Determine audio source priority: dedicated audio URL, then dedicated audio file, then main video source (URL or file)
     if (loadedTranscriptionAudioUrl) {
         audioSourceForAssembly = { url: loadedTranscriptionAudioUrl };
-        audioSourceName = loadedPresetId !== null ? `preset ${loadedPresetId} audio URL` : "custom audio URL";
+        audioSourceName = (loadedPresetId !== null && loadedTranscriptionAudioUrl.includes(`/${loadedPresetId}.mp3`)) 
+                            ? `preset ${loadedPresetId} audio URL` 
+                            : "custom audio URL";
     } else if (transcriptionAudioFile) {
         audioSourceForAssembly = { file: transcriptionAudioFile };
         audioSourceName = "custom audio file";
-    } else if (loadedMainVideoUrl) { 
+    } else if (loadedMainVideoUrl) { // This implies mainVideoSrc is also loadedMainVideoUrl
         audioSourceForAssembly = { url: loadedMainVideoUrl };
-        audioSourceName = `audio from video URL`;
-    } else if (mainVideoFile) { 
-        // This case should be less common if presets set loadedTranscriptionAudioUrl
+        audioSourceName = loadedPresetId !== null ? `audio from preset ${loadedPresetId} video URL` : `audio from video URL`;
+    } else if (mainVideoFile) { // This implies mainVideoSrc is from mainVideoFile
         audioSourceForAssembly = { file: mainVideoFile };
-        audioSourceName = loadedPresetId !== null ? `preset ${loadedPresetId} audio (from video file)` : 'video file audio';
-    } else if (mainVideoSrc && !mainVideoSrc.startsWith('blob:') && loadedPresetId === null) { 
-        audioSourceForAssembly = { url: mainVideoSrc };
-        audioSourceName = `audio from main video source URL`;
+        audioSourceName = 'audio from video file';
     }
-
+    // Note: mainVideoSrc could be a URL not captured by loadedMainVideoUrl if preset was just loaded and loadedMainVideoUrl was cleared.
+    // The logic in handleLoadPreset ensures loadedMainVideoUrl and loadedTranscriptionAudioUrl are set correctly for presets.
 
     if (!audioSourceForAssembly) {
-        setTranscriptionStatus("Error: No audio source (file or URL) for transcription could be determined.");
+        setTranscriptionStatus("Error: No audio source for transcription could be determined. Please ensure a main video/audio is loaded.");
         setIsProcessingAI(false);
         return;
     }
@@ -667,13 +726,18 @@ const App: React.FC = () => {
       const onPause = () => setIsPlaying(false);
       const onEnded = () => { setIsPlaying(false); setActiveSegmentIndex(-1); }; 
       const onLoadedMeta = () => {
-        setVideoDuration(videoNode.duration);
+        if (videoNode.duration !== Infinity && !isNaN(videoNode.duration)) { // Check for valid duration
+            setVideoDuration(videoNode.duration);
+        }
         setCurrentTime(videoNode.currentTime); 
       };
       
-      if(mainVideoSrc && !mainVideoSrc.startsWith('blob:') && videoNode.currentTime > 0 && videoNode.src !== mainVideoSrc){
+      // Reset currentTime if src changes and it's not a blob (i.e. not a file just re-selected)
+      // This helps if user switches between URLs or presets.
+      if(mainVideoSrc && !mainVideoSrc.startsWith('blob:') && videoNode.src !== mainVideoSrc){
         videoNode.currentTime = 0;
         setCurrentTime(0);
+        setVideoDuration(0); // Reset duration as well until new metadata loads
       }
 
       videoNode.addEventListener('play', onPlay);
@@ -682,7 +746,7 @@ const App: React.FC = () => {
       videoNode.addEventListener('timeupdate', handleTimeUpdate);
       videoNode.addEventListener('loadedmetadata', onLoadedMeta);
       
-      if (videoNode.readyState >= 1) { 
+      if (videoNode.readyState >= 1) { // HAVE_METADATA or greater
         onLoadedMeta();
       }
 
@@ -713,7 +777,7 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-gray-800 text-gray-100 flex flex-col items-center p-4 selection:bg-purple-500 selection:text-white">
       <header className="w-full max-w-5xl mb-6 text-center">
         <h1 className="text-4xl font-bold text-purple-400">AI Video Visualizer</h1>
-        <p className="text-gray-400 mt-1">Provide video/audio via file, URL, or preset. Get transcriptions & AI-suggested visuals synced to dialogue.</p>
+        <p className="text-gray-400 mt-1">Provide video/audio via preset, URL, or file. Get transcriptions & AI-suggested visuals synced to dialogue.</p>
       </header>
 
       {!geminiApiKeyExists && ( <div className="w-full max-w-3xl p-3 mb-3 bg-red-800 text-red-100 border border-red-600 rounded-md text-sm text-center"><strong>Critical Error:</strong> Gemini API Key (process.env.API_KEY) is not set. Visual suggestions will not function.</div>)}
@@ -724,59 +788,80 @@ const App: React.FC = () => {
         <div className="md:w-1/3 space-y-4 bg-gray-700 p-4 rounded-lg shadow-xl">
           <h2 className="text-xl font-semibold text-purple-300 border-b border-purple-400 pb-2">Configuration</h2>
           
+          {/* Preset Section (Always Visible) */}
           <div className="space-y-2 p-3 bg-gray-600 rounded-md shadow">
             <label htmlFor="presetInput" className="block text-sm font-medium text-gray-300">
               A. Use Preset (Enter Number)
             </label>
             <div className="flex items-center space-x-2">
-              <input type="number" id="presetInput" value={presetInput} onChange={handlePresetInputChange} placeholder="e.g., 1, 7, etc." min="1" className="w-28 p-1.5 text-sm bg-gray-800 text-gray-200 border border-gray-500 rounded focus:ring-1 focus:ring-purple-500 focus:border-purple-500" aria-describedby="preset-status"/>
+              <input type="number" id="presetInput" value={presetInput} onChange={handlePresetInputChange} placeholder="e.g., 1, 7" min="1" className="w-28 p-1.5 text-sm bg-gray-800 text-gray-200 border border-gray-500 rounded focus:ring-1 focus:ring-purple-500 focus:border-purple-500" aria-describedby="preset-status"/>
               <button onClick={handleLoadPreset} disabled={!isPresetInputValid || isPresetLoading} className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-all duration-150 ease-in-out ${(!isPresetInputValid || isPresetLoading) ? 'bg-gray-500 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
                 {isPresetLoading ? 'Loading...' : 'Load Preset'}
               </button>
             </div>
             {currentPresetStatus && (<p id="preset-status" className={`text-xs mt-1 ${currentPresetStatus.includes("Invalid") || currentPresetStatus.includes("Error") ? 'text-red-400' : 'text-green-400'}`}>{currentPresetStatus}</p>)}
-            {/* Removed details for available presets as they are dynamic now */}
           </div>
           
-          <p className="text-center text-gray-400 text-sm font-semibold">- OR -</p>
-
-          <div className="space-y-3 p-3 bg-gray-600 rounded-md shadow">
-            <h3 className="text-sm font-medium text-gray-300">B. Load from URL</h3>
-            <div>
-                <label htmlFor="mainVideoUrlInput" className="block text-xs font-medium text-gray-300 mb-0.5">Main Video URL:</label>
-                <div className="flex items-center space-x-2">
-                    <input type="url" id="mainVideoUrlInput" value={mainVideoUrlInput} onChange={(e) => setMainVideoUrlInput(e.target.value)} placeholder="https://example.com/video.mp4" className="flex-grow p-1.5 text-sm bg-gray-800 text-gray-200 border border-gray-500 rounded focus:ring-1 focus:ring-purple-500 focus:border-purple-500"/>
-                    <button onClick={handleLoadMainVideoUrl} disabled={!mainVideoUrlValidForLoad} className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-all ${!mainVideoUrlValidForLoad ? 'bg-gray-500 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>Load</button>
-                </div>
-            </div>
-            <div>
-                <label htmlFor="transcriptionAudioUrlInput" className="block text-xs font-medium text-gray-300 mb-0.5">Audio URL for Transcription (Optional):</label>
-                <div className="flex items-center space-x-2">
-                    <input type="url" id="transcriptionAudioUrlInput" value={transcriptionAudioUrlInput} onChange={(e) => setTranscriptionAudioUrlInput(e.target.value)} placeholder="https://example.com/audio.mp3" className="flex-grow p-1.5 text-sm bg-gray-800 text-gray-200 border border-gray-500 rounded focus:ring-1 focus:ring-purple-500 focus:border-purple-500"/>
-                    <button onClick={handleLoadTranscriptionAudioUrl} disabled={!audioUrlValidForLoad} className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-all ${!audioUrlValidForLoad ? 'bg-gray-500 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>Load</button>
-                </div>
+          {/* Alternative Method Selection */}
+          <div className="p-3 bg-gray-600 rounded-md shadow">
+            <h3 className="text-sm font-medium text-gray-300 mb-2">B. Or, Select Another Input Method:</h3>
+            <div className="flex space-x-2">
+                <button 
+                    onClick={() => handleShowAlternativeMethod('url')} 
+                    className={`flex-1 px-3 py-1.5 text-sm font-semibold rounded-md transition-all ${activeAlternativeMethod === 'url' ? 'bg-purple-600 hover:bg-purple-700 text-white ring-2 ring-purple-300' : 'bg-gray-500 hover:bg-gray-400 text-white'}`}
+                >
+                    Show URL Inputs
+                </button>
+                <button 
+                    onClick={() => handleShowAlternativeMethod('file')}
+                    className={`flex-1 px-3 py-1.5 text-sm font-semibold rounded-md transition-all ${activeAlternativeMethod === 'file' ? 'bg-purple-600 hover:bg-purple-700 text-white ring-2 ring-purple-300' : 'bg-gray-500 hover:bg-gray-400 text-white'}`}
+                >
+                    Show File Uploads
+                </button>
             </div>
           </div>
 
-          <p className="text-center text-gray-400 text-sm font-semibold">- OR -</p>
+          {/* Conditional URL Input Section */}
+          {activeAlternativeMethod === 'url' && (
+            <div className="space-y-3 p-3 bg-gray-600/70 rounded-md shadow animate-fadeIn"> {/* Added animate-fadeIn for smoother appearance */}
+              <h3 className="text-sm font-medium text-gray-300">Load from URL</h3>
+              <div>
+                  <label htmlFor="mainVideoUrlInput" className="block text-xs font-medium text-gray-300 mb-0.5">Main Video URL:</label>
+                  <div className="flex items-center space-x-2">
+                      <input type="url" id="mainVideoUrlInput" value={mainVideoUrlInput} onChange={(e) => setMainVideoUrlInput(e.target.value)} placeholder="https://example.com/video.mp4" className="flex-grow p-1.5 text-sm bg-gray-800 text-gray-200 border border-gray-500 rounded focus:ring-1 focus:ring-purple-500 focus:border-purple-500"/>
+                      <button onClick={handleLoadMainVideoUrl} disabled={!mainVideoUrlValidForLoad} className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-all ${!mainVideoUrlValidForLoad ? 'bg-gray-500 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>Load</button>
+                  </div>
+              </div>
+              <div>
+                  <label htmlFor="transcriptionAudioUrlInput" className="block text-xs font-medium text-gray-300 mb-0.5">Audio URL for Transcription (Optional):</label>
+                  <div className="flex items-center space-x-2">
+                      <input type="url" id="transcriptionAudioUrlInput" value={transcriptionAudioUrlInput} onChange={(e) => setTranscriptionAudioUrlInput(e.target.value)} placeholder="https://example.com/audio.mp3" className="flex-grow p-1.5 text-sm bg-gray-800 text-gray-200 border border-gray-500 rounded focus:ring-1 focus:ring-purple-500 focus:border-purple-500"/>
+                      <button onClick={handleLoadTranscriptionAudioUrl} disabled={!audioUrlValidForLoad} className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-all ${!audioUrlValidForLoad ? 'bg-gray-500 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>Load</button>
+                  </div>
+              </div>
+            </div>
+          )}
 
-           <div className="p-3 bg-gray-600 rounded-md shadow">
-             <h3 className="text-sm font-medium text-gray-300 mb-2">C. Upload Files</h3>
-            <FileUpload
-                label="Main Video File"
-                onFileUpload={handleMainVideoUpload}
-                accept="video/*"
-                currentFile={mainVideoFile}
-                isRequired={!mainVideoSrc} 
-            />
-            <FileUpload
-                label="Audio File for Transcription (Optional)"
-                onFileUpload={handleTranscriptionAudioUpload}
-                accept="audio/*"
-                currentFile={transcriptionAudioFile}
-                isRequired={false}
-            />
-          </div>
+          {/* Conditional File Upload Section */}
+          {activeAlternativeMethod === 'file' && (
+             <div className="p-3 bg-gray-600/70 rounded-md shadow animate-fadeIn"> {/* Added animate-fadeIn */}
+               <h3 className="text-sm font-medium text-gray-300 mb-2">Upload Files</h3>
+              <FileUpload
+                  label="Main Video File"
+                  onFileUpload={handleMainVideoUpload}
+                  accept="video/*"
+                  currentFile={mainVideoFile}
+                  isRequired={!mainVideoSrc && activeAlternativeMethod === 'file'} 
+              />
+              <FileUpload
+                  label="Audio File for Transcription (Optional)"
+                  onFileUpload={handleTranscriptionAudioUpload}
+                  accept="audio/*"
+                  currentFile={transcriptionAudioFile}
+                  isRequired={false}
+              />
+            </div>
+          )}
           
           <button
             onClick={handleTranscribeAndProcessSentences}
@@ -887,6 +972,15 @@ const App: React.FC = () => {
           </div>
         </section>
       )}
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-5px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeIn {
+          animation: fadeIn 0.3s ease-out forwards;
+        }
+      `}</style>
     </div>
   );
 };
